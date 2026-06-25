@@ -204,16 +204,13 @@ def page_overview():
         colors = [RED, AMBER, GREEN]
         fig = go.Figure(go.Bar(x=counts, y=labels, orientation="h",
                                marker_color=colors, width=0.62,
-                               text=[f"{c}  ({c/n:.0%})" for c in counts],
-                               textposition="outside", cliponaxis=False,
-                               hovertemplate="%{y}: %{x} students<extra></extra>"))
-        style_fig(fig, 300)
+                               text=[f"{c} ({c/n:.0%})" for c in counts],
+                               textposition="outside", cliponaxis=False, textfont=dict(size=13)))
+        style_fig(fig, 320)
         fig.update_layout(title="Students by risk level",
-                          xaxis=dict(range=[0, max(counts) * 1.18], showgrid=True, gridcolor="#EEF1F7"),
+                          xaxis=dict(range=[0, max(counts) * 1.32], showgrid=True, gridcolor="#EEF1F7"),
                           yaxis=dict(autorange="reversed"))
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     with right:
         st.markdown(f"<div class='card'><h3 style='margin-top:0'>What this means</h3>"
                     f"<p style='font-size:15px;color:{INK};line-height:1.6'>At the institution's current "
@@ -272,6 +269,8 @@ def page_students():
 
 # ============ PROFILE ============
 def page_profile():
+    if st.button("← Back to Students"):
+        st.session_state._goto = "Students"; st.rerun()
     pos = st.session_state.student_pos
     p_pick = st.selectbox("Viewing", [f"#{student_ids[p]}" for p in order[:50]],
                           index=list(order[:50]).index(pos) if pos in order[:50] else 0,
@@ -321,7 +320,7 @@ def page_model():
     t1, t2, t3, t4 = st.tabs(["Performance", "Threshold explorer", "Fairness", "Explainability"])
     def preds_at(thr): return np.where(p_dropout >= thr, DROPOUT, np.argmax(proba[:, 1:], axis=1) + 1)
     with t1:
-        pred = preds_at(INST_THRESHOLD)
+        pred = preds_at(st.session_state.thr)
         tp = np.sum((yt == DROPOUT) & (pred == DROPOUT)); fn = np.sum((yt == DROPOUT) & (pred != DROPOUT))
         fp = np.sum((yt != DROPOUT) & (pred == DROPOUT))
         rec = tp / (tp + fn); prec = tp / (tp + fp) if (tp + fp) else 0; acc = np.mean(pred == yt)
@@ -344,12 +343,13 @@ def page_model():
                                   ("Accuracy", f"{acc:.1%}"), ("Macro F1", f"{mf1:.2f}")]):
             c.markdown(f"<div class='kpi'><div class='num' style='font-size:28px;color:{NAVY}'>{v}</div>"
                        f"<div class='lab'>{l}</div></div>", unsafe_allow_html=True)
-        st.caption(f"At the institution threshold {INST_THRESHOLD:.2f}, on {n} held-out students.")
+        st.caption(f"At threshold {st.session_state.thr:.2f}, on {n} held-out students. Adjust it in the Threshold explorer tab.")
         if cm is not None:
             fig = go.Figure(go.Heatmap(z=cm, x=class_names, y=class_names, colorscale="Blues",
-                                       text=cm, texttemplate="%{text}", showscale=False))
+                                       text=cm, texttemplate="%{text}", showscale=False,
+                                       hovertemplate="Actual %{y}, predicted %{x}: %{z} students<extra></extra>"))
             style_fig(fig, 340); fig.update_layout(title="Confusion matrix", xaxis_title="Predicted", yaxis_title="Actual")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     with t2:
         thr = st.slider("Decision threshold", 0.10, 0.79, st.session_state.thr, 0.01); st.session_state.thr = thr
         ths = np.linspace(0.10, 0.79, 40); recs, precs = [], []
@@ -361,7 +361,7 @@ def page_model():
         fig.add_trace(go.Scatter(x=ths, y=precs, name="Precision", line=dict(color=BLUE, width=3)))
         fig.add_vline(x=thr, line_dash="dash", line_color=INK)
         style_fig(fig, 360); fig.update_layout(xaxis_title="Threshold", yaxis_title="Score", yaxis_range=[0, 1])
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         st.caption(f"At threshold {thr:.2f}: {int(np.sum(preds_at(thr) == DROPOUT))} students flagged.")
     with t3:
         SUB = {"Financial risk": ("financial_risk", {0: "No financial risk", 1: "Has financial risk"}),
@@ -378,13 +378,13 @@ def page_model():
         gap = (max(vals) - min(vals)) if len(vals) >= 2 and not any(np.isnan(vals)) else float("nan")
         style_fig(fig, 360); fig.update_layout(yaxis_range=[0, 110], yaxis_title="Dropout recall (%)",
                                                title=f"Recall gap at threshold {st.session_state.thr:.2f}: {gap:.1f} points")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     with t4:
         imp = sorted(((nm, float(np.mean(np.abs(np.sum(shap_dropout[:, cols], axis=1)))))
                       for nm, cols in concept_cols.items()), key=lambda x: x[1])[-12:]
         fig = go.Figure(go.Bar(x=[v for _, v in imp], y=[k for k, _ in imp], orientation="h", marker_color=NAVY))
         style_fig(fig, 420); fig.update_layout(title="Global feature importance (mean |SHAP|)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         st.caption("Drives the plain-language risk factors shown to advisors.")
 
 
