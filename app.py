@@ -126,12 +126,13 @@ def tier(p):
 
 def drivers(pos):
     scored = [(name, float(np.sum(shap_dropout[pos, cols]))) for name, cols in concept_cols.items()]
-    risk = [(T.get(nm, (nm, "", "academic"))[0], T.get(nm, (nm, "", "academic"))[2])
+    risk = [(T[nm][0], T[nm][2])
             for nm, v in sorted([s for s in scored if s[1] > 0], key=lambda x: -x[1])
-            if T.get(nm, (nm, "", "academic"))[0]]
-    prot = [T.get(nm, ("", nm, "academic"))[1]
+            if nm in T and T[nm][0]]
+    # protective: only concepts pushing AWAY from dropout AND with a real positive plain meaning
+    prot = [T[nm][1]
             for nm, v in sorted([s for s in scored if s[1] < 0], key=lambda x: x[1])
-            if T.get(nm, ("", nm, "academic"))[1]]
+            if nm in T and T[nm][1]]
     return risk, prot
 
 
@@ -185,7 +186,7 @@ def kpi(col, value, label, color):
 
 # ============ DASHBOARD ============
 def page_overview():
-    st.markdown("<h1>Institution health</h1>"
+    st.markdown("<h1>Retention snapshot</h1>"
                 "<div class='muted'>Where the current student body stands, and who needs attention.</div><br>",
                 unsafe_allow_html=True)
     tiers = np.array([tier(p)[0] for p in p_dropout])
@@ -198,25 +199,29 @@ def page_overview():
     st.markdown("<br>", unsafe_allow_html=True)
     left, right = st.columns([1.35, 1])
     with left:
-        fig = go.Figure(go.Histogram(x=p_dropout, nbinsx=28, marker_color=NAVY,
-                                     marker_line_width=0, opacity=.92))
-        fig.add_vline(x=INST_THRESHOLD, line_dash="dash", line_color=RED)
-        fig.add_annotation(x=INST_THRESHOLD, y=1, yref="paper", text="Intervention line",
-                           showarrow=False, font=dict(color=RED, size=12), xanchor="left", xshift=6)
-        style_fig(fig, 330)
-        fig.update_layout(title="Risk distribution", xaxis_title="Model-estimated dropout likelihood",
-                          yaxis_title="Students")
+        labels = ["High risk", "Medium risk", "Lower risk"]
+        counts = [high, med, low]
+        colors = [RED, AMBER, GREEN]
+        fig = go.Figure(go.Bar(x=counts, y=labels, orientation="h",
+                               marker_color=colors, width=0.62,
+                               text=[f"{c}  ({c/n:.0%})" for c in counts],
+                               textposition="outside", cliponaxis=False,
+                               hovertemplate="%{y}: %{x} students<extra></extra>"))
+        style_fig(fig, 300)
+        fig.update_layout(title="Students by risk level",
+                          xaxis=dict(range=[0, max(counts) * 1.18], showgrid=True, gridcolor="#EEF1F7"),
+                          yaxis=dict(autorange="reversed"))
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.plotly_chart(fig, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown(f"<div class='card'><h3 style='margin-top:0'>What this means</h3>"
                     f"<p style='font-size:15px;color:{INK};line-height:1.6'>At the institution's current "
-                    f"intervention line, <b>{high} students</b> are high risk and warrant outreach now. "
-                    f"The model identifies roughly <b>3 in 4</b> of the students who go on to leave, early "
-                    f"enough to act.</p><p class='muted'>The risk scores cluster near 0 and near 1 — the "
-                    f"model is confident about most students and genuinely uncertain about few. "
-                    f"Open <b>Students</b> to see who needs attention and why.</p></div>",
+                    f"intervention line, <b>{high} students</b> are high risk and warrant outreach now, "
+                    f"<b>{med}</b> are worth monitoring, and <b>{low}</b> look on track.</p>"
+                    f"<p style='font-size:15px;color:{INK};line-height:1.6'>The model identifies roughly "
+                    f"<b>3 in 4</b> of the students who go on to leave, early enough to act.</p>"
+                    f"<p class='muted'>Open <b>Students</b> to see who needs attention and why.</p></div>",
                     unsafe_allow_html=True)
 
 
@@ -287,7 +292,7 @@ def page_profile():
                     unsafe_allow_html=True)
         act, when, owner = recommendation(pos)
         st.markdown(f"<div class='card'><h3 style='margin-top:0'>Recommended next steps</h3>"
-                    f"<div class='rec-box'><b>{act}</b><br><span class='muted'>Owner: {owner} · {when}</span></div>"
+                    f"<div class='rec-box'><b>{act}</b><br><span class='muted'>Refer to: {owner} · {when}</span></div>"
                     f"</div>", unsafe_allow_html=True)
     with c2:
         rows = []
@@ -320,11 +325,20 @@ def page_model():
         tp = np.sum((yt == DROPOUT) & (pred == DROPOUT)); fn = np.sum((yt == DROPOUT) & (pred != DROPOUT))
         fp = np.sum((yt != DROPOUT) & (pred == DROPOUT))
         rec = tp / (tp + fn); prec = tp / (tp + fp) if (tp + fp) else 0; acc = np.mean(pred == yt)
-        try:
-            from sklearn.metrics import f1_score, confusion_matrix
-            mf1 = f1_score(yt, pred, average="macro"); cm = confusion_matrix(yt, pred)
-        except Exception:
-            mf1, cm = float("nan"), None
+        # macro F1 computed manually so it never depends on sklearn
+        f1s = []
+        K = len(class_names)
+        cm = np.zeros((K, K), dtype=int)
+        for a, p in zip(yt, pred):
+            cm[int(a), int(p)] += 1
+        for k in range(K):
+            tpk = np.sum((yt == k) & (pred == k))
+            fpk = np.sum((yt != k) & (pred == k))
+            fnk = np.sum((yt == k) & (pred != k))
+            pk = tpk / (tpk + fpk) if (tpk + fpk) else 0.0
+            rk = tpk / (tpk + fnk) if (tpk + fnk) else 0.0
+            f1s.append(2 * pk * rk / (pk + rk) if (pk + rk) else 0.0)
+        mf1 = float(np.mean(f1s))
         cs = st.columns(4)
         for c, (l, v) in zip(cs, [("Dropout recall", f"{rec:.1%}"), ("Dropout precision", f"{prec:.1%}"),
                                   ("Accuracy", f"{acc:.1%}"), ("Macro F1", f"{mf1:.2f}")]):
