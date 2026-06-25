@@ -344,41 +344,43 @@ def page_model():
             c.markdown(f"<div class='kpi'><div class='num' style='font-size:28px;color:{NAVY}'>{v}</div>"
                        f"<div class='lab'>{l}</div></div>", unsafe_allow_html=True)
         st.caption(f"At threshold {st.session_state.thr:.2f}, on {n} held-out students. Adjust it in the Threshold explorer tab.")
-        # color the diagonal green (correct) and off-diagonal red (mistakes);
-        # plain-English hover so a non-technical reader understands each cell
+        # diagonal = correct (green), off-diagonal = mistake (red). Percentages are ROW-based
+        # (out of the actual group), so the diagonal reads as recall. Hover sentence leads with the prediction.
         K = len(class_names)
-        VERB = {"Dropout": "dropped out", "Enrolled": "were still enrolled", "Graduate": "graduated"}
-        def actual_phrase(c): return VERB.get(c, "were " + c.lower())
-        row_tot = cm.sum(axis=1, keepdims=True)
-        color = np.zeros((K, K))
-        hover = [["" for _ in range(K)] for _ in range(K)]
-        for i in range(K):      # actual
-            for j in range(K):  # predicted
+        VERB_ACT = {"Dropout": "had actually dropped out", "Enrolled": "were actually still enrolled",
+                    "Graduate": "had actually graduated"}
+        def actual_phrase(c): return VERB_ACT.get(c, "were actually " + c.lower())
+        row_tot = cm.sum(axis=1, keepdims=True)  # totals per actual class
+        color = np.zeros((K, K)); hover = [["" for _ in range(K)] for _ in range(K)]
+        celltext = [["" for _ in range(K)] for _ in range(K)]
+        for i in range(K):      # actual (row)
+            for j in range(K):  # predicted (column)
                 cnt = int(cm[i, j]); pct = (cnt / row_tot[i, 0] * 100) if row_tot[i, 0] else 0
-                color[i, j] = pct if i == j else -pct  # green scale for correct, red for wrong
+                color[i, j] = pct if i == j else -pct
+                celltext[i][j] = f"{cnt}<br>{pct:.0f}%"
                 if i == j:
-                    hover[i][j] = (f"<b>{cnt} students</b> who actually {actual_phrase(class_names[i])} "
-                                   f"were correctly predicted as {class_names[j]}.<br>"
-                                   f"That is {pct:.0f}% of the actual {class_names[i]} group.")
+                    hover[i][j] = (f"The model predicted <b>{class_names[j]}</b> for <b>{cnt} students</b> "
+                                   f"who {actual_phrase(class_names[i])} — a correct call.<br>"
+                                   f"That is {pct:.0f}% of all students who {actual_phrase(class_names[i])}.")
                 else:
                     miss = " The model missed these at-risk students." if class_names[i] == "Dropout" else ""
-                    hover[i][j] = (f"<b>{cnt} students</b> who actually {actual_phrase(class_names[i])} "
-                                   f"were predicted as {class_names[j]}.{miss}")
-        diverging = [[0.0, "#E8B4AC"], [0.5, "#FBEFEC"], [0.5, "#EAF3EC"], [1.0, "#2E7D46"]]
+                    hover[i][j] = (f"The model predicted <b>{class_names[j]}</b> for <b>{cnt} students</b> "
+                                   f"who {actual_phrase(class_names[i])}.{miss}<br>"
+                                   f"That is {pct:.0f}% of all students who {actual_phrase(class_names[i])}.")
+        diverging = [[0.0, "#C0392B"], [0.5, "#F6DCD7"], [0.5, "#DCEEE1"], [1.0, "#1E7A3D"]]
         fig = go.Figure(go.Heatmap(
             z=color, x=class_names, y=class_names, zmin=-100, zmax=100,
             colorscale=diverging, showscale=False,
-            text=[[f"{int(cm[i, j])}<br>{(cm[i,j]/row_tot[i,0]*100 if row_tot[i,0] else 0):.0f}%"
-                   for j in range(K)] for i in range(K)],
-            texttemplate="%{text}", textfont=dict(size=13),
-            customdata=hover, hovertemplate="%{customdata}<extra></extra>"))
+            text=celltext, texttemplate="%{text}", textfont=dict(size=15, color="#111111"),
+            customdata=hover, hovertemplate="%{customdata}<extra></extra>",
+            xgap=3, ygap=3))
         style_fig(fig, 360)
         fig.update_layout(title="Confusion matrix — green is correct, red is a mistake",
                           xaxis_title="Predicted (what the model said)",
                           yaxis_title="Actual (what really happened)")
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.caption("Each cell: number of students and the percentage within that actual-outcome row. "
-                   "Hover any cell for a plain-language reading.")
+        st.caption("Each cell: number of students and the percentage within that actual-outcome row "
+                   "(so the green diagonal is recall). Hover any cell for a plain-language reading.")
     with t2:
         thr = st.slider("Decision threshold", 0.10, 0.79, st.session_state.thr, 0.01); st.session_state.thr = thr
         ths = np.linspace(0.10, 0.79, 40); recs, precs = [], []
