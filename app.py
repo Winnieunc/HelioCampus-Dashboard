@@ -399,7 +399,11 @@ def page_model():
                "Gender": ("Gender", {0: "Female", 1: "Male"}),
                "Scholarship": ("Scholarship holder", {0: "No scholarship", 1: "Has scholarship"}),
                "Attendance": ("Daytime/evening attendance", {0: "Evening", 1: "Daytime"})}
-        attr = st.selectbox("Audit recall by", list(SUB.keys())); col, mp = SUB[attr]; pred = preds_at(st.session_state.thr)
+        attr = st.selectbox("Audit recall by", list(SUB.keys())); col, mp = SUB[attr]
+        # Match the formal Phase 8 audit: predictions use the model's default rule (argmax),
+        # i.e. best_xgb.predict(), NOT the 0.33 operating threshold. This keeps the dashboard,
+        # the methodology slide, and the fairness slide reporting the same gap (32.7 points).
+        pred = np.argmax(proba, axis=1)
         labels, vals, ns = [], [], []; codes = Xo[col].values
         for code, lab in mp.items():
             den = np.sum((codes == code) & (yt == DROPOUT)); num = np.sum((codes == code) & (yt == DROPOUT) & (pred == DROPOUT))
@@ -408,8 +412,10 @@ def page_model():
                                text=[f"{v:.1f}%<br>(n={x})" for v, x in zip(vals, ns)], textposition="outside", cliponaxis=False))
         gap = (max(vals) - min(vals)) if len(vals) >= 2 and not any(np.isnan(vals)) else float("nan")
         style_fig(fig, 360); fig.update_layout(yaxis_range=[0, 110], yaxis_title="Dropout recall (%)",
-                                               title=f"Recall gap at threshold {st.session_state.thr:.2f}: {gap:.1f} points")
+                                               title=f"Recall gap at the model's default decision rule: {gap:.1f} points")
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.caption("Recall by subgroup at the model's default decision rule (argmax), reproducing the "
+                   "formal Phase 8 fairness audit. The largest disparity is by financial risk.")
     with t4:
         imp = sorted(((nm, float(np.mean(np.abs(np.sum(shap_dropout[:, cols], axis=1)))))
                       for nm, cols in concept_cols.items()), key=lambda x: x[1])[-12:]
